@@ -1,4 +1,4 @@
 
-*.properties
-/build/
-/out/
+build/
+out/
+src/main/resources/env.properties

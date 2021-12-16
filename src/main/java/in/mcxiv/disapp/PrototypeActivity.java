@@ -27,23 +27,39 @@ public class PrototypeActivity extends ListenerAdapter {
     private static final Pattern rx_KIITMailID = Pattern.compile("([\\d]{4})([\\d]{4})@kiit\\.ac\\.in");
     private static final FLog log = FLog.getNew();
 
-    private static final String TOKEN;
+    private static final String BOT_TOKEN;
     private static final String LINK;
-    private static final String MAIL_FROM;
-    private static final String APP_PASS;
+
+    private static final String SMTP_MAIL_SENDER;
+    private static final String SMTP_APPLICATION_PASS;
+    private static final String MAIL_USER_NAME;
+    private static final String SMTP_HOST_NAME = "smtp.gmail.com";
+    private static final String SMTP_PORT = "465";
+    private static final Properties SMTP_ENVIRONMENT_PROPERTIES = new Properties();
 
     static {
-        ResourceBundle bundle = ResourceBundle.getBundle("properties.properties");
-        TOKEN = bundle.getString("bot_token");
+        ResourceBundle bundle = ResourceBundle.getBundle("env");
+        BOT_TOKEN = bundle.getString("bot_token");
         LINK = bundle.getString("invite_link");
-        MAIL_FROM = bundle.getString("mail_from");
-        APP_PASS = bundle.getString("app_pass");
+        SMTP_MAIL_SENDER = bundle.getString("mail_from");
+        SMTP_APPLICATION_PASS = bundle.getString("app_pass");
+        MAIL_USER_NAME = bundle.getString("user_name");
+
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.user", SMTP_MAIL_SENDER);
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.host", SMTP_HOST_NAME);
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.port", SMTP_PORT);
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.starttls.enable", "true");
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.debug", "true");
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.auth", "true");
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.port", SMTP_PORT);
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
+        SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.fallback", "false");
     }
 
     private static final String fmt_REQUEST_MAIL_ID = """
             **WELCOME TO B20's PRIVATE SERVER**
             Sorry for the inconvenience but we need to make sure that only members of B20 batch can join this server!
-            Therefore, I request you to give me your KIIT mail ID so that I can share you an OTP.
+            Therefore, I request you to give me your KIIT mail ID __on the server__ so that I can share you an OTP.
             """;
 
     private static final String fmt_MAIL_SENT_NOTICE = """
@@ -89,7 +105,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
         PrototypeActivity activity = new PrototypeActivity();
 
-        JDABuilder builder = JDABuilder.createDefault(TOKEN);
+        JDABuilder builder = JDABuilder.createDefault(BOT_TOKEN);
         builder.setActivity(Activity.watching("the world!"));
         builder.addEventListeners(activity);
         log.prt("JDA builder built");
@@ -125,7 +141,7 @@ public class PrototypeActivity extends ListenerAdapter {
             listOfOTPsSent.forEach(System.out::println);
         }));
 
-        log.prt("Bot initialised, cached and ready!");
+        notice("Bot Active", "It's initialised, cached and ready!");
     }
 
     private boolean isVerified(Member member) {
@@ -147,46 +163,28 @@ public class PrototypeActivity extends ListenerAdapter {
     private static void addRole(Guild guild, Member member, User user) {
         guild.addRoleToMember(member, guild.getRolesByName("Member", false).get(0)).queue();
         user.openPrivateChannel().queue(privateChannel -> privateChannel.sendMessage(fmt_VERIFIED).queue());
-        log.prt("Role given to %s".formatted(user.getAvatarId()));
+        log.prt("Role given to %s".formatted(user.getAsTag()));
     }
 
     private void sendVerificationMail(String m_to, int otp) {
-        String d_email = MAIL_FROM,
-                d_uname = "Anirudh Sharma",
-                d_password = APP_PASS,
-                d_host = "smtp.gmail.com",
-                d_port = "465",
-                m_subject = "Verification Requested!",
-                m_text = fmt_OTP_MAIL.formatted(otp);
 
-        Properties props = new Properties();
-        props.put("mail.smtp.user", d_email);
-        props.put("mail.smtp.host", d_host);
-        props.put("mail.smtp.port", d_port);
-        props.put("mail.smtp.starttls.enable", "true");
-        props.put("mail.smtp.debug", "true");
-        props.put("mail.smtp.auth", "true");
-        props.put("mail.smtp.socketFactory.port", d_port);
-        props.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
-        props.put("mail.smtp.socketFactory.fallback", "false");
-
-        Session session = Session.getInstance(props, new javax.mail.Authenticator() {
+        Session session = Session.getInstance(SMTP_ENVIRONMENT_PROPERTIES, new javax.mail.Authenticator() {
             protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(d_email, d_password);
+                return new PasswordAuthentication(SMTP_MAIL_SENDER, SMTP_APPLICATION_PASS);
             }
         });
 
-        session.setDebug(true);
+        session.setDebug(false);
 
         MimeMessage msg = new MimeMessage(session);
         try {
-            msg.setSubject(m_subject);
-            msg.setFrom(new InternetAddress(d_email));
+            msg.setSubject("Verification Requested!");
+            msg.setFrom(new InternetAddress(SMTP_MAIL_SENDER));
             msg.addRecipient(Message.RecipientType.TO, new InternetAddress(m_to));
-            msg.setText(m_text);
+            msg.setText(fmt_OTP_MAIL.formatted(otp));
 
             Transport transport = session.getTransport("smtps");
-            transport.connect(d_host, Integer.parseInt(d_port), d_uname, d_password);
+            transport.connect(SMTP_HOST_NAME, Integer.parseInt(SMTP_PORT), MAIL_USER_NAME, SMTP_APPLICATION_PASS);
             transport.sendMessage(msg, msg.getAllRecipients());
             transport.close();
 
@@ -211,7 +209,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
         if (author.isBot()) return;
 
-        log.prt("Someone joined the server, specifically %s".formatted(author.getName()));
+        notice("New Member", "%s joined the server!".formatted(author.getName()));
 
         author.openPrivateChannel().queue(privateChannel -> {
             privateChannel.sendMessage(fmt_REQUEST_MAIL_ID).queue();
@@ -229,7 +227,7 @@ public class PrototypeActivity extends ListenerAdapter {
         if (author.isBot()) return;
 
         if (isBeingProcessed(author)) {
-            log.prt("%s is under processing".formatted(author.getAvatarId()));
+            log.prt("%s is under processing".formatted(author.getAsTag()));
             MemberRecord memberRecord = getMR(author);
             if (contentRaw.contains(String.valueOf(memberRecord.otp))) {
                 log.prt("OPT %d Verified".formatted(memberRecord.otp));
@@ -257,7 +255,7 @@ public class PrototypeActivity extends ListenerAdapter {
         if (sessionale != 2105) return;
         if (rollnumish < 2041 || rollnumish > 2125) return;
 
-        log.prt("Verification requested by %d%d tagged %s".formatted(sessionale, rollnumish, author.getAvatarId()));
+        notice("Verification Req", "%1$s wants to get verified. %1$s's roll number is %2$d%3$d.".formatted(author.getAsTag(), sessionale, rollnumish));
 
         author.openPrivateChannel().queue(privateChannel -> {
             int otp = (int) (Math.random() * 1000000);
