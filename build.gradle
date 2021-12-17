@@ -1,25 +1,47 @@
 plugins {
     id 'org.jetbrains.kotlin.jvm' version '1.5.10'
     id 'java'
+    id 'application'
 }
 
-group 'org.example'
-version '1.0-SNAPSHOT'
+group 'in.mcxiv'
+version '0.1.2'
 
 repositories {
     mavenCentral()
     maven { url 'https://jitpack.io' }
 }
 
+configurations {
+    provided
+    implementation.extendsFrom(provided)
+}
+
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib"
-    implementation 'net.dv8tion:JDA:5.0.0-alpha.2'
-    implementation 'com.sun.mail:javax.mail:1.6.2'
-    implementation 'com.github.Minecraftian14:MyLOGGER:v5.6'
+    provided "org.jetbrains.kotlin:kotlin-stdlib"
+    provided 'net.dv8tion:JDA:5.0.0-alpha.2'
+    provided 'com.sun.mail:javax.mail:1.6.2'
+    provided 'com.github.Minecraftian14:MyLOGGER:v5.6'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.7.0'
 }
 
 test {
     useJUnitPlatform()
+}
+
+task buildJar(type: Jar) {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    with jar
+    from configurations.provided.asFileTree.files.collect {
+        if (it.name.endsWith(".jar"))
+            zipTree(it)
+    }
+
+    manifest {
+        attributes 'Main-Class': 'in.mcxiv.disapp.PrototypeActivity'
+    }
+
+//    destinationDirectory.set(file('./../BotAstraTest/libs/'))
 }

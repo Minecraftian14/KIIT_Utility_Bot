@@ -1,7 +1,10 @@
 package in.mcxiv.disapp;
 
+import com.mcxiv.logger.decorations.Decorations;
 import com.mcxiv.logger.decorations.Format;
 import com.mcxiv.logger.formatted.FLog;
+import com.mcxiv.logger.formatted.fixed.FileLog;
+import com.mcxiv.logger.ultimate.ULog;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.*;
@@ -16,6 +19,9 @@ import javax.mail.*;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeMessage;
 import javax.security.auth.login.LoginException;
+import java.io.PrintStream;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -25,7 +31,9 @@ import java.util.regex.Pattern;
 public class PrototypeActivity extends ListenerAdapter {
 
     private static final Pattern rx_KIITMailID = Pattern.compile("([\\d]{4})([\\d]{4})@kiit\\.ac\\.in");
-    private static final FLog log = FLog.getNew();
+    private static final FLog log;
+
+    private static final int CORES;
 
     private static final String BOT_TOKEN;
     private static final String LINK;
@@ -38,6 +46,22 @@ public class PrototypeActivity extends ListenerAdapter {
     private static final Properties SMTP_ENVIRONMENT_PROPERTIES = new Properties();
 
     static {
+
+        // https://github.com/DV8FromTheWorld/JDA/issues/1858#issuecomment-942066283
+        CORES = Runtime.getRuntime().availableProcessors();
+        System.out.printf("We are running on a total of %d cores!%n", CORES);
+        if (CORES <= 1) {
+            System.out.println("Welp... Setting up Parallelism Flag.");
+            System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", "1");
+        }
+
+        FLog file_logger = FileLog.getNew("KIIT Bot Utility.log");
+        FLog strm_logger = FLog.getNew();
+        file_logger.setDecorationType(Decorations.TAG);
+        strm_logger.setDecorationType(Decorations.CONSOLE);
+        log = ULog.forNew().add(file_logger).add(strm_logger).create();
+        log.prt(LocalDateTime.now());
+
         ResourceBundle bundle = ResourceBundle.getBundle("env");
         BOT_TOKEN = bundle.getString("bot_token");
         LINK = bundle.getString("invite_link");
@@ -110,6 +134,14 @@ public class PrototypeActivity extends ListenerAdapter {
         builder.addEventListeners(activity);
         log.prt("JDA builder built");
 
+        Thread inputThread = new Thread(() -> {
+            new Scanner(System.in).next();
+            notice("App Closing", "The application is going to shut down.");
+            System.exit(0);
+        });
+        inputThread.setPriority(Thread.MIN_PRIORITY);
+        inputThread.start();
+
         JDA jda = builder.build();
         log.prt("JDA starting");
         jda.awaitReady();
@@ -138,7 +170,9 @@ public class PrototypeActivity extends ListenerAdapter {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.prtf(":$Rn:").consume("Exiting System (or probably already exited...)!");
-            listOfOTPsSent.forEach(System.out::println);
+            List<String> list = listOfOTPsSent.stream().map(MemberRecord::toString).toList();
+            for (int i = 0; i < list.size(); i++)
+                log.prtf(":%3s #00f: -> ::", ":#aaf n:").consume("" + i, list.get(i));
         }));
 
         notice("Bot Active", "It's initialised, cached and ready!");
@@ -160,6 +194,12 @@ public class PrototypeActivity extends ListenerAdapter {
                 .orElseThrow();
     }
 
+    private Member getMember(MessageReceivedEvent event, User user) {
+        Member member = event.getMember();
+        if (member != null) return member;
+        return member = GUILD.retrieveMember(user).complete();
+    }
+
     private static void addRole(Guild guild, Member member, User user) {
         guild.addRoleToMember(member, guild.getRolesByName("Member", false).get(0)).queue();
         user.openPrivateChannel().queue(privateChannel -> privateChannel.sendMessage(fmt_VERIFIED).queue());
@@ -168,7 +208,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
     private void sendVerificationMail(String m_to, int otp) {
 
-        Session session = Session.getInstance(SMTP_ENVIRONMENT_PROPERTIES, new javax.mail.Authenticator() {
+        Session session = Session.getInstance(SMTP_ENVIRONMENT_PROPERTIES, new Authenticator() {
             protected PasswordAuthentication getPasswordAuthentication() {
                 return new PasswordAuthentication(SMTP_MAIL_SENDER, SMTP_APPLICATION_PASS);
             }
@@ -221,13 +261,12 @@ public class PrototypeActivity extends ListenerAdapter {
     public void onMessageReceived(@NotNull MessageReceivedEvent event) {
 
         User author = event.getAuthor();
-        Member member = event.getMember();
+        Member member = getMember(event, author);
         String contentRaw = event.getMessage().getContentRaw().toLowerCase();
 
         if (author.isBot()) return;
 
         if (isBeingProcessed(author)) {
-            log.prt("%s is under processing".formatted(author.getAsTag()));
             MemberRecord memberRecord = getMR(author);
             if (contentRaw.contains(String.valueOf(memberRecord.otp))) {
                 log.prt("OPT %d Verified".formatted(memberRecord.otp));
@@ -256,6 +295,7 @@ public class PrototypeActivity extends ListenerAdapter {
         if (rollnumish < 2041 || rollnumish > 2125) return;
 
         notice("Verification Req", "%1$s wants to get verified. %1$s's roll number is %2$d%3$d.".formatted(author.getAsTag(), sessionale, rollnumish));
+        event.getMessage().addReaction("\uD83D\uDC4D").queue();
 
         author.openPrivateChannel().queue(privateChannel -> {
             int otp = (int) (Math.random() * 1000000);
