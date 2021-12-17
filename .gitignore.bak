@@ -1,5 +1,5 @@
-.gradle/
+
 build/
 out/
 src/main/resources/env.properties
-logs/
+logs/KIIT Bot Utility
