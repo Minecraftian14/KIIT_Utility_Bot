@@ -298,7 +298,11 @@ public class PrototypeActivity extends ListenerAdapter {
         event.getMessage().addReaction("\uD83D\uDC4D").queue();
 
         author.openPrivateChannel().queue(privateChannel -> {
-            int otp = (int) (Math.random() * 1000000);
+            /*int otp = (int) ((Math.random() * (999999 - 100000)) + 100000);
+            other method*/
+            Random random = new Random();
+            int otp = random.ints(100000, 999999).findFirst().getAsInt();
+            
             listOfOTPsSent.add(new MemberRecord(member, author, GUILD, otp));
             log.prt("Sending mail");
             sendVerificationMail(mail_id, otp);
