@@ -19,8 +19,6 @@ import javax.mail.*;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeMessage;
 import javax.security.auth.login.LoginException;
-import java.io.PrintStream;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Consumer;
@@ -32,6 +30,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
     private static final Pattern rx_KIITMailID = Pattern.compile("([\\d]{4})([\\d]{4})@kiit\\.ac\\.in");
     private static final FLog log;
+    private static final Random random = new Random(3 * new Random().nextLong() + 3);
 
     private static final int CORES;
 
@@ -44,6 +43,7 @@ public class PrototypeActivity extends ListenerAdapter {
     private static final String SMTP_HOST_NAME = "smtp.gmail.com";
     private static final String SMTP_PORT = "465";
     private static final Properties SMTP_ENVIRONMENT_PROPERTIES = new Properties();
+    private static final List<String> ROLL_CALLS;
 
     static {
 
@@ -68,6 +68,7 @@ public class PrototypeActivity extends ListenerAdapter {
         SMTP_MAIL_SENDER = bundle.getString("mail_from");
         SMTP_APPLICATION_PASS = bundle.getString("app_pass");
         MAIL_USER_NAME = bundle.getString("user_name");
+        ROLL_CALLS = List.of(bundle.getString("valid_roll_calls").split(","));
 
         SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.user", SMTP_MAIL_SENDER);
         SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.host", SMTP_HOST_NAME);
@@ -78,6 +79,7 @@ public class PrototypeActivity extends ListenerAdapter {
         SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.port", SMTP_PORT);
         SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.class", "javax.net.ssl.SSLSocketFactory");
         SMTP_ENVIRONMENT_PROPERTIES.put("mail.smtp.socketFactory.fallback", "false");
+
     }
 
     private static final String fmt_REQUEST_MAIL_ID = """
@@ -259,12 +261,21 @@ public class PrototypeActivity extends ListenerAdapter {
 
     @Override
     public void onMessageReceived(@NotNull MessageReceivedEvent event) {
+        try {
+            __onMessageReceived__(event);
+        } catch (Throwable throwable) {
+            throwable.printStackTrace();
+        }
+    }
+
+    public void __onMessageReceived__(@NotNull MessageReceivedEvent event) {
 
         User author = event.getAuthor();
         Member member = getMember(event, author);
         String contentRaw = event.getMessage().getContentRaw().toLowerCase();
 
-        if (author.isBot()) return;
+        if (author.isBot())
+            return;
 
         if (isBeingProcessed(author)) {
             MemberRecord memberRecord = getMR(author);
@@ -273,36 +284,41 @@ public class PrototypeActivity extends ListenerAdapter {
                 memberRecord.addMemberRole();
                 listOfOTPsSent.remove(memberRecord);
             }
+//            sendDM(author, "That's either an invalid OTP, or I miss understood your message.");
             return;
         }
 
-        if (member == null) return;
+        if (member == null) {
+            sendDM(author, ":eyes: You're not even in the server, right?");
+            return;
+        }
 
         if (!contentRaw.contains("verify")) return;
         if (isVerified(member)) {
-            sendDM(author, fmt_ALREADY_VERIFIED);
+            if (event.getChannel() instanceof PrivateChannel)
+                sendDM(author, fmt_ALREADY_VERIFIED);
             return;
         }
 
         Matcher matcher = rx_KIITMailID.matcher(contentRaw);
-        if (!matcher.find()) return;
+        if (!matcher.find()) {
+            sendDM(author, "Please ask me to get verified while also sending your KIIT mail id in the same message.");
+            return;
+        }
 
         short sessionale = Short.parseShort(matcher.group(1));
         short rollnumish = Short.parseShort(matcher.group(2));
         String mail_id = matcher.group();
 
         if (sessionale != 2105) return;
-        if (rollnumish < 2041 || rollnumish > 2125) return;
+        if (!ROLL_CALLS.contains(sessionale + "" + rollnumish)) return;
 
         notice("Verification Req", "%1$s wants to get verified. %1$s's roll number is %2$d%3$d.".formatted(author.getAsTag(), sessionale, rollnumish));
         event.getMessage().addReaction("\uD83D\uDC4D").queue();
 
         author.openPrivateChannel().queue(privateChannel -> {
-            /*int otp = (int) ((Math.random() * (999999 - 100000)) + 100000);
-            other method*/
-            Random random = new Random();
-            int otp = random.ints(100000, 999999).findFirst().getAsInt();
-            
+            int otp = random.nextInt(100_000, 1_000_000);
+
             listOfOTPsSent.add(new MemberRecord(member, author, GUILD, otp));
             log.prt("Sending mail");
             sendVerificationMail(mail_id, otp);
