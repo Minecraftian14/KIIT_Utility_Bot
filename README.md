@@ -2,7 +2,7 @@
  
 As the name suggests, this bot is designed to provide some utilities and tools to make working around in our section-private server.
 
-[![](https://img.shields.io/discord/872811194170347520?color=%237289da&logoColor=%23424549)](https://discord.gg/hZnHFGvU6W)
+[![](https://img.shields.io/discord/872811194170347520?color=%237289da&logoColor=%23424549)](https://discord.gg/Ar6Zuj2m82)
 
 Well... For now it it's just a prototype of a verification bot.
 
