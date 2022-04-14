@@ -31,6 +31,7 @@ To test run it on your system, I recommend you to use Intellij IDEA and import t
 Further, one must create a file named `env.properties` located at `src/main/resources` with the following content
 ```js
 bot_token=YOUR DISCORD BOT TOKEN
+dev_bot_token=ALTERNATE DISCORD BOT TOKEN_FOR_TESTING_PURPOSES
 invite_link=NOT REALLY USED ANYWHERE
 mail_from=SENDER'S MAIL ID
 app_pass=GMAIL APPLICATION PASSWORD

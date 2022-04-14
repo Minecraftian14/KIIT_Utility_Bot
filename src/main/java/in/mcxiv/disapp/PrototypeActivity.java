@@ -16,6 +16,7 @@ import net.dv8tion.jda.api.events.guild.member.GuildMemberJoinEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.managers.channel.attribute.IPermissionContainerManager;
+import net.dv8tion.jda.api.requests.RestAction;
 import org.jetbrains.annotations.NotNull;
 
 import javax.mail.Message;
@@ -25,6 +26,7 @@ import javax.mail.internet.MimeMessage;
 import javax.security.auth.login.LoginException;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -33,13 +35,17 @@ import java.util.regex.Pattern;
 @Format(":#aaf n:.::")
 public class PrototypeActivity extends ListenerAdapter {
 
+    private static final boolean IS_UNDER_TEST = false;
+
     private static final Pattern rx_KIITMailID = Pattern.compile("([\\d]{4})([\\d]{4})@kiit\\.ac\\.in");
     private static final FLog log;
     private static final Random random = new Random(3 * new Random().nextLong() + 3);
 
     private static final int CORES;
 
+    private static final String BOT_KEY = "kub";
     private static final String BOT_TOKEN;
+    private static final String DEV_BOT_TOKEN;
     private static final String LINK;
 
     private static final String SMTP_MAIL_SENDER;
@@ -79,6 +85,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
         ResourceBundle bundle = ResourceBundle.getBundle("env");
         BOT_TOKEN = bundle.getString("bot_token");
+        DEV_BOT_TOKEN = bundle.getString("dev_bot_token");
         LINK = bundle.getString("invite_link");
         SMTP_MAIL_SENDER = bundle.getString("mail_from");
         SMTP_APPLICATION_PASS = bundle.getString("app_pass");
@@ -131,6 +138,9 @@ public class PrototypeActivity extends ListenerAdapter {
             And, do `allow @SomeRole` to make current channel visible to that role.
             """;
 
+    private static final String COMMAND_ROOT = "root";
+    private static final String COMMAND_ARGS = "root";
+
     private static final String SEND_HELP_COMMAND = "help";
     private static final String RESET_PERMISSIONS_COMMAND = "reset";
     private static final String ALLOW_SPECIFIC_ROLE_COMMAND = "allow";
@@ -156,7 +166,10 @@ public class PrototypeActivity extends ListenerAdapter {
 
         PrototypeActivity activity = new PrototypeActivity();
 
-        JDABuilder builder = JDABuilder.createDefault(BOT_TOKEN);
+        if (IS_UNDER_TEST)
+            notice("TEST BUILD", "Use Fishy Bot to get response!");
+
+        JDABuilder builder = JDABuilder.createDefault(IS_UNDER_TEST ? DEV_BOT_TOKEN : BOT_TOKEN);
         builder.setActivity(Activity.watching("the world!"));
         builder.addEventListeners(activity);
         log.prt("JDA builder built");
@@ -174,11 +187,10 @@ public class PrototypeActivity extends ListenerAdapter {
         jda.awaitReady();
     }
 
-    private List<MemberRecord> listOfOTPsSent = new ArrayList<>();
-
+    private final List<MemberRecord> listOfOTPsSent = new ArrayList<>();
     private Guild GUILD;
     private Role MEMBER_ROLE;
-    private ArgsEvaler commands;
+    private ArgsEvaler COMMANDS;
 
     @Override
     public void onReady(@NotNull ReadyEvent event) {
@@ -203,9 +215,10 @@ public class PrototypeActivity extends ListenerAdapter {
                 log.prtf(":%3s #00f: -> ::", ":#aaf n:").consume("" + i, list.get(i));
         }));
 
-        commands = new ArgsEvaler.ArgsEvalerBuilder()
-                .addTagged(SEND_HELP_COMMAND)
-                .addTagged(RESET_PERMISSIONS_COMMAND)
+        COMMANDS = new ArgsEvaler.ArgsEvalerBuilder()
+                .addIndexed(BOT_KEY)
+                .addIndexed(COMMAND_ROOT)
+                .addIndexed(COMMAND_ARGS)
                 .addTagged(ALLOW_SPECIFIC_ROLE_COMMAND, Role.class)
                 .addResolver(Role.class, (c, s) -> Try.getAnd(() -> GUILD.getRoleById(s.substring(3, s.length() - 1))).elseNull())
                 .build();
@@ -360,19 +373,31 @@ public class PrototypeActivity extends ListenerAdapter {
     }
 
     private boolean messageIsParsableAndIsParsed(MessageReceivedEvent event, User author, Member member, String contentRaw) {
+        if (IS_UNDER_TEST) {
+            if (!contentRaw.startsWith("dev")) return false;
+            contentRaw = contentRaw.substring(contentRaw.indexOf(" ")).trim();
+            notice("Command Tried", contentRaw);
+        }
+
         AtomicBoolean didWeParseAnything = new AtomicBoolean(false);
         Consumer<Runnable> updater = runnable -> {
             didWeParseAnything.set(true);
             runnable.run();
         };
 
-        ArgsEvaler.ResultMap resultMap = commands.parseToResultMap(contentRaw.split(" +"));
+        ArgsEvaler.ResultMap resultMap = COMMANDS.parseToResultMap(contentRaw.split(" +"));
 
-        if (resultMap.containsKey(SEND_HELP_COMMAND))
-            updater.accept(() -> event.getChannel().sendMessage(HELP_MESSAGE).queue());
+        if(!resultMap.get(BOT_KEY, "null").equals(BOT_KEY))
+            return false;
 
-        if (resultMap.containsKey(RESET_PERMISSIONS_COMMAND))
-            updater.accept(() -> resetPermissionsRequested(member, event));
+        resultMap.getOpt(COMMAND_ROOT)
+                .map(Object::toString)
+                .ifPresent(s -> updater.accept(() -> {
+                    switch (s) {
+                        case SEND_HELP_COMMAND -> sendDM(author, HELP_MESSAGE);
+                        case RESET_PERMISSIONS_COMMAND -> resetPermissionsRequested(member, event);
+                    }
+                }));
 
         resultMap.getOpt(ALLOW_SPECIFIC_ROLE_COMMAND)
                 .filter(o -> o instanceof Role)
@@ -389,17 +414,23 @@ public class PrototypeActivity extends ListenerAdapter {
 
             IPermissionContainerManager<?, ?> manager = guildChannel.getPermissionContainer().getManager();
 
-            manager.reset().queue(unused -> {
-                manager.putRolePermissionOverride(GUILD.getPublicRole().getIdLong(),
-                        List.of(),
-                        List.of(Permission.values())
-                ).queue(unused1 -> {
-                    manager.putRolePermissionOverride(MEMBER_ROLE.getIdLong(),
-                            ALLOWED_PERMISSIONS,
-                            List.of()
-                    ).queue();
-                });
-            });
+            //noinspection ResultOfMethodCallIgnored
+            guildChannel.getPermissionContainer().getPermissionOverrides()
+                    .forEach(po -> manager.removePermissionOverride(po.getIdLong()));
+
+            //noinspection ResultOfMethodCallIgnored
+            manager.putRolePermissionOverride(GUILD.getPublicRole().getIdLong(),
+                    List.of(),
+                    List.of(Permission.values())
+            );
+
+            //noinspection ResultOfMethodCallIgnored
+            manager.putRolePermissionOverride(MEMBER_ROLE.getIdLong(),
+                    ALLOWED_PERMISSIONS,
+                    List.of()
+            );
+
+            manager.queue();
 
             notice("Ran Reset Command", "on Channel %s".formatted(guildChannel.getName()));
         }
@@ -423,9 +454,9 @@ public class PrototypeActivity extends ListenerAdapter {
     }
 
     private static boolean hasHigherAuthority(Role role) {
-        String name = role.getName().replaceAll("[^\\w]", "").toLowerCase();
+        String name = role.getName().replaceAll("[^\\w]+", "").toLowerCase();
         if (name.equals("admin")) return true;
-        if (name.equals("head mod")) return true;
+        if (name.equals("headmod")) return true;
         return false;
     }
 
