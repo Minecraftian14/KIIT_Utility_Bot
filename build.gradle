@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'in.mcxiv'
-version '0.1.2'
+version '0.1.3'
 
 repositories {
     mavenCentral()
@@ -21,7 +21,10 @@ dependencies {
     provided "org.jetbrains.kotlin:kotlin-stdlib"
     provided 'net.dv8tion:JDA:5.0.0-alpha.2'
     provided 'com.sun.mail:javax.mail:1.6.2'
+
     provided 'com.github.Minecraftian14:MyLOGGER:v5.6'
+    provided 'in.mcxiv.MCXIVUtilities:args:5dc74447ff:args'
+    provided 'in.mcxiv:TryCatchSuite:0'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.7.0'

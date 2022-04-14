@@ -5,13 +5,17 @@ import com.mcxiv.logger.decorations.Format;
 import com.mcxiv.logger.formatted.FLog;
 import com.mcxiv.logger.formatted.fixed.FileLog;
 import com.mcxiv.logger.ultimate.ULog;
+import in.mcxiv.ArgsEvaler;
+import in.mcxiv.tryCatchSuite.Try;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.*;
 import net.dv8tion.jda.api.events.ReadyEvent;
 import net.dv8tion.jda.api.events.guild.member.GuildMemberJoinEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.managers.channel.attribute.IPermissionContainerManager;
 import org.jetbrains.annotations.NotNull;
 
 import javax.mail.Message;
@@ -21,6 +25,7 @@ import javax.mail.internet.MimeMessage;
 import javax.security.auth.login.LoginException;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -44,6 +49,16 @@ public class PrototypeActivity extends ListenerAdapter {
     private static final String SMTP_PORT = "465";
     private static final Properties SMTP_ENVIRONMENT_PROPERTIES = new Properties();
     private static final List<String> ROLL_CALLS;
+    private static final List<Permission> ALLOWED_PERMISSIONS = Arrays.stream(Permission.values()).filter(permission ->
+            !permission.equals(Permission.MANAGE_CHANNEL) &&
+                    !permission.equals(Permission.MANAGE_PERMISSIONS) &&
+                    !permission.equals(Permission.MANAGE_WEBHOOKS) &&
+                    !permission.equals(Permission.CREATE_INSTANT_INVITE) &&
+                    !permission.equals(Permission.MESSAGE_MENTION_EVERYONE) &&
+                    !permission.equals(Permission.MESSAGE_MANAGE) &&
+                    !permission.equals(Permission.MANAGE_THREADS) &&
+                    !permission.equals(Permission.MESSAGE_TTS)
+    ).toList();
 
     static {
 
@@ -105,10 +120,20 @@ public class PrototypeActivity extends ListenerAdapter {
             """;
 
     private static final String fmt_ALREADY_VERIFIED = """
-            Bro... I appreciate the enthusiasm...
+            Hmmm... I appreciate the enthusiasm...
             Just a note between among us.
             You're already verified xD
             """;
+
+    private static final String HELP_MESSAGE = """
+            Help Message to be done.
+            Basically, do `reset` to make current channel invisible to everyone except member and other things.
+            And, do `allow @SomeRole` to make current channel visible to that role.
+            """;
+
+    private static final String SEND_HELP_COMMAND = "help";
+    private static final String RESET_PERMISSIONS_COMMAND = "reset";
+    private static final String ALLOW_SPECIFIC_ROLE_COMMAND = "allow";
 
     @Format({":: :#0f0 <hh;mm;ss> %*20s b: ::", ":#afa n:.::"})
     public static void notice(String title, String msg) {
@@ -153,6 +178,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
     private Guild GUILD;
     private Role MEMBER_ROLE;
+    private ArgsEvaler commands;
 
     @Override
     public void onReady(@NotNull ReadyEvent event) {
@@ -176,6 +202,13 @@ public class PrototypeActivity extends ListenerAdapter {
             for (int i = 0; i < list.size(); i++)
                 log.prtf(":%3s #00f: -> ::", ":#aaf n:").consume("" + i, list.get(i));
         }));
+
+        commands = new ArgsEvaler.ArgsEvalerBuilder()
+                .addTagged(SEND_HELP_COMMAND)
+                .addTagged(RESET_PERMISSIONS_COMMAND)
+                .addTagged(ALLOW_SPECIFIC_ROLE_COMMAND, Role.class)
+                .addResolver(Role.class, (c, s) -> Try.getAnd(() -> GUILD.getRoleById(s.substring(3, s.length() - 1))).elseNull())
+                .build();
 
         notice("Bot Active", "It's initialised, cached and ready!");
     }
@@ -261,11 +294,7 @@ public class PrototypeActivity extends ListenerAdapter {
 
     @Override
     public void onMessageReceived(@NotNull MessageReceivedEvent event) {
-        try {
-            __onMessageReceived__(event);
-        } catch (Throwable throwable) {
-            throwable.printStackTrace();
-        }
+        Try.run(() -> __onMessageReceived__(event));
     }
 
     public void __onMessageReceived__(@NotNull MessageReceivedEvent event) {
@@ -276,6 +305,8 @@ public class PrototypeActivity extends ListenerAdapter {
 
         if (author.isBot())
             return;
+
+        if (messageIsParsableAndIsParsed(event, author, member, contentRaw)) return;
 
         if (isBeingProcessed(author)) {
             MemberRecord memberRecord = getMR(author);
@@ -326,6 +357,76 @@ public class PrototypeActivity extends ListenerAdapter {
             privateChannel.sendMessage(fmt_MAIL_SENT_NOTICE).queue();
             log.prt("DM sent");
         });
+    }
+
+    private boolean messageIsParsableAndIsParsed(MessageReceivedEvent event, User author, Member member, String contentRaw) {
+        AtomicBoolean didWeParseAnything = new AtomicBoolean(false);
+        Consumer<Runnable> updater = runnable -> {
+            didWeParseAnything.set(true);
+            runnable.run();
+        };
+
+        ArgsEvaler.ResultMap resultMap = commands.parseToResultMap(contentRaw.split(" +"));
+
+        if (resultMap.containsKey(SEND_HELP_COMMAND))
+            updater.accept(() -> event.getChannel().sendMessage(HELP_MESSAGE).queue());
+
+        if (resultMap.containsKey(RESET_PERMISSIONS_COMMAND))
+            updater.accept(() -> resetPermissionsRequested(member, event));
+
+        resultMap.getOpt(ALLOW_SPECIFIC_ROLE_COMMAND)
+                .filter(o -> o instanceof Role)
+                .ifPresent(o -> updater.accept(() -> allowNewRoleRequested(member, event, ((Role) o))));
+
+        return didWeParseAnything.get();
+    }
+
+    private void resetPermissionsRequested(Member member, MessageReceivedEvent event) {
+        if (!event.isFromGuild()) return;
+
+        if (member.getRoles().stream().anyMatch(PrototypeActivity::hasHigherAuthority)) {
+            GuildMessageChannel guildChannel = event.getGuildChannel();
+
+            IPermissionContainerManager<?, ?> manager = guildChannel.getPermissionContainer().getManager();
+
+            manager.reset().queue(unused -> {
+                manager.putRolePermissionOverride(GUILD.getPublicRole().getIdLong(),
+                        List.of(),
+                        List.of(Permission.values())
+                ).queue(unused1 -> {
+                    manager.putRolePermissionOverride(MEMBER_ROLE.getIdLong(),
+                            ALLOWED_PERMISSIONS,
+                            List.of()
+                    ).queue();
+                });
+            });
+
+            notice("Ran Reset Command", "on Channel %s".formatted(guildChannel.getName()));
+        }
+    }
+
+    private void allowNewRoleRequested(Member member, MessageReceivedEvent event, Role role) {
+        if (!event.isFromGuild()) return;
+
+        if (member.getRoles().stream().anyMatch(PrototypeActivity::hasHigherAuthority)) {
+            GuildMessageChannel guildChannel = event.getGuildChannel();
+
+            IPermissionContainerManager<?, ?> manager = guildChannel.getPermissionContainer().getManager();
+
+            manager.putRolePermissionOverride(role.getIdLong(),
+                    ALLOWED_PERMISSIONS,
+                    List.of()
+            ).queue();
+
+            notice("Ran Allow Command", "on Channel %s for role %s".formatted(guildChannel.getName(), role.getName()));
+        }
+    }
+
+    private static boolean hasHigherAuthority(Role role) {
+        String name = role.getName().replaceAll("[^\\w]", "").toLowerCase();
+        if (name.equals("admin")) return true;
+        if (name.equals("head mod")) return true;
+        return false;
     }
 
     record MemberRecord(Member member, User user, Guild guild, Integer otp) {
